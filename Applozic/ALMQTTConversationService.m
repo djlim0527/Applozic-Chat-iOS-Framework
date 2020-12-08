@@ -26,6 +26,8 @@
 static NSString *const MQTT_TOPIC_STATUS = @"status-v2";
 static NSString *const MQTT_ENCRYPTION_SUB_KEY = @"encr-";
 static NSString * const observeSupportGroupMessage = @"observeSupportGroupMessage";
+NSString *const ALChannelDidChangeGroupMuteNotification = @"ALChannelDidChangeGroupMuteNotification";
+NSString *const ALLoggedInUserDidChangeDeactivateNotification = @"ALLoggedInUserDidChangeDeactivateNotification";
 
 @implementation ALMQTTConversationService
 
@@ -256,8 +258,6 @@ static NSString * const observeSupportGroupMessage = @"observeSupportGroupMessag
         data = [dataToString dataUsingEncoding:NSUTF8StringEncoding];
 
         ALSLog(ALLoggerSeverityInfo, @"MQTT_GOT_NEW_MESSAGE after decyption : %@", dataToString);
-    }else{
-        fullMessage = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding ];
     }
 
     ALSLog(ALLoggerSeverityInfo, @"MQTT_GOT_NEW_MESSAGE : %@", fullMessage);
@@ -509,9 +509,28 @@ static NSString * const observeSupportGroupMessage = @"observeSupportGroupMessag
             // BROADCAST MESSAGE : MESSAGE_DELIVERED_AND_READ
         }
         else if([type isEqualToString:pushNotificationService.notificationTypes[@(AL_MESSAGE_METADATA_UPDATE)]]){ // MESSAGE_METADATA_UPDATE
-            [ALMessageService syncMessageMetaData:[ALUserDefaultsHandler getDeviceKeyString] withCompletion:^(NSMutableArray *message, NSError *error) {
-                ALSLog(ALLoggerSeverityInfo, @"Successfully updated message metadata");
-            }];
+            @try
+            {
+                NSDictionary *messageDict = [theMessageDict objectForKey:@"message"];
+                ALMessage *alMessage = [[ALMessage alloc] initWithDictonary: messageDict];
+                if (alMessage.groupId != nil) {
+                    ALChannelService *channelService = [[ALChannelService alloc] init];
+                    ALChannel * channel = [channelService getChannelByKey:alMessage.groupId];
+                    if (channel && channel.isOpenGroup) {
+                        if (alMessage.hasAttachment) {
+                            ALMessageDBService *messageDBService = [[ALMessageDBService alloc] init];
+                            [messageDBService updateMessageMetadataOfKey:alMessage.key withMetadata:alMessage.metadata];
+                        }
+                        [[NSNotificationCenter defaultCenter] postNotificationName:AL_MESSAGE_META_DATA_UPDATE object:alMessage userInfo:nil];
+                    } else {
+                        [self.alSyncCallService syncMessageMetadata];
+                    }
+                } else {
+                    [self.alSyncCallService syncMessageMetadata];
+                }
+            } @catch (NSException * exp) {
+                ALSLog(ALLoggerSeverityError, @"Error while conversating dictionary to message: %@", exp.description);
+            }
         }
         else if([type isEqualToString:pushNotificationService.notificationTypes[@(AL_CONVERSATION_READ)]]){
             //Conversation read for user
@@ -546,9 +565,26 @@ static NSString * const observeSupportGroupMessage = @"observeSupportGroupMessag
                     
                 }];
             }
-        }
-        else
-        {
+        } else if ([type isEqualToString:pushNotificationService.notificationTypes[@(AL_GROUP_MUTE_NOTIFICATION)]]) {
+            ALChannelService *channelService = [[ALChannelService alloc] init];
+            NSArray *parts = [[theMessageDict objectForKey:@"message"] componentsSeparatedByString:@":"];
+            if (parts.count == 2) {
+                NSNumber * channelKey = [NSNumber numberWithInt:[parts[0] intValue]];
+                NSNumber * notificationMuteTillTime = [NSNumber numberWithDouble:[parts[1] doubleValue]];
+                [channelService updateMuteAfterTime:notificationMuteTillTime andChnnelKey:channelKey];
+                [[NSNotificationCenter defaultCenter] postNotificationName:ALChannelDidChangeGroupMuteNotification object:nil userInfo:@{@"CHANNEL_KEY": channelKey}];
+
+                if (self.realTimeUpdate) {
+                    [self.realTimeUpdate onChannelMute:channelKey];
+                }
+            }
+        } else if ([type isEqualToString:pushNotificationService.notificationTypes[@(AL_USER_ACTIVATED)]]) {
+            [ALUserDefaultsHandler deactivateLoggedInUser:NO];
+            [[NSNotificationCenter defaultCenter] postNotificationName:ALLoggedInUserDidChangeDeactivateNotification object:nil userInfo:@{@"DEACTIVATED": @"false"}];
+        } else if ([type isEqualToString:pushNotificationService.notificationTypes[@(AL_USER_DEACTIVATED)]]) {
+            [ALUserDefaultsHandler deactivateLoggedInUser:YES];
+            [[NSNotificationCenter defaultCenter] postNotificationName:ALLoggedInUserDidChangeDeactivateNotification object:nil userInfo:@{@"DEACTIVATED": @"true"}];
+        } else {
             ALSLog(ALLoggerSeverityInfo, @"MQTT NOTIFICATION \"%@\" IS NOT HANDLED",type);
         }
     }
@@ -801,7 +837,6 @@ static NSString * const observeSupportGroupMessage = @"observeSupportGroupMessag
 
     }];
 }
-
 -(BOOL)shouldRetry {
     BOOL isInBackground = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
     return !isInBackground && [ALDataNetworkConnection checkDataNetworkAvailable];

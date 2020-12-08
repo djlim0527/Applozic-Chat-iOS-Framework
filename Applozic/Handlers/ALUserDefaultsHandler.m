@@ -957,6 +957,33 @@
     return [[NSUserDefaults alloc] initWithSuiteName:AL_DEFAULT_APP_GROUP];
 }
 
++ (void)deactivateLoggedInUser:(BOOL)deactivate {
+    NSUserDefaults *userDefaults = ALUserDefaultsHandler.getUserDefaults;
+    [userDefaults setBool: deactivate forKey:AL_LOGGED_IN_USER_DEACTIVATED];
+    [userDefaults synchronize];
+}
+
++ (BOOL)isLoggedInUserDeactivated {
+    NSUserDefaults *userDefaults = ALUserDefaultsHandler.getUserDefaults;
+    return [userDefaults boolForKey:AL_LOGGED_IN_USER_DEACTIVATED];
+}
+
++(void)setChannelListLastSyncGeneratedTime:(NSNumber *)lastSyncGeneratedTime {
+    lastSyncGeneratedTime = @([lastSyncGeneratedTime doubleValue] + 1);
+    NSUserDefaults *userDefaults = ALUserDefaultsHandler.getUserDefaults;
+    [userDefaults setDouble:[lastSyncGeneratedTime doubleValue] forKey:AL_CHANNEL_LIST_LAST_GENERATED_TIME];
+    [userDefaults synchronize];
+}
+
++(NSNumber *)getChannelListLastSyncGeneratedTime {
+    NSUserDefaults *userDefaults = ALUserDefaultsHandler.getUserDefaults;
+    NSNumber * lastSyncGeneratedTime = [userDefaults valueForKey:AL_CHANNEL_LIST_LAST_GENERATED_TIME];
+    if (!lastSyncGeneratedTime) {
+        lastSyncGeneratedTime = [NSNumber numberWithInt:10000];
+    }
+    return lastSyncGeneratedTime;
+}
+
 +(SecureStore *)getSecureStore {
     PasswordQueryable *passQuery = [[PasswordQueryable alloc]
                                            initWithService: AL_STORE];
